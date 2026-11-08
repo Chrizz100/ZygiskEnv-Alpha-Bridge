@@ -1,0 +1,13 @@
+ROOT_DIR ?= .
+NDK_PATH ?= $(ANDROID_NDK_LATEST_HOME)
+TOOLCHAIN ?= $(NDK_PATH)/toolchains/llvm/prebuilt/linux-x86_64
+CC ?= $(TOOLCHAIN)/bin/clang
+ANDROID_API ?= 25
+ARCHS ?= arm64-v8a armeabi-v7a x86 x86_64
+VER_NAME ?= v2.0.0-compat
+VER_CODE ?= 20000
+BUILD_DIR ?= $(ROOT_DIR)/build
+TARGET_arm64-v8a = aarch64-linux-android$(ANDROID_API)
+TARGET_armeabi-v7a = armv7a-linux-androideabi$(ANDROID_API)
+TARGET_x86 = i686-linux-android$(ANDROID_API)
+TARGET_x86_64 = x86_64-linux-android$(ANDROID_API)
