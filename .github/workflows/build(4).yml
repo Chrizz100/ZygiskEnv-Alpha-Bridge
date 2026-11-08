@@ -1,0 +1,92 @@
+name: ZygiskEnv Alpha Bridge - build from main.zip
+
+on:
+  push:
+    paths:
+      - main.zip
+      - .github/workflows/build.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Test and build Magisk module
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare Java headers for native host tests
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Validate and extract main.zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s main.zip || { echo 'ERROR: main.zip not found in repository root'; exit 1; }
+          unzip -tq main.zip
+          while IFS= read -r entry; do
+            case "$entry" in
+              /*|../*|*/../*|*/..) echo "UNSAFE ARCHIVE ENTRY: $entry"; exit 1 ;;
+            esac
+          done < <(unzip -Z -1 main.zip)
+          mkdir -p source
+          unzip -q main.zip -d source
+          for path in Makefile common.mk src/main.c src/zygisk.h src/logger.h module/module.prop module/customize.sh tests/test_main.c tests/test_installer.sh; do
+            test -s "source/$path" || { echo "MISSING: $path"; exit 1; }
+          done
+          echo 'SHA256 for uploaded source:'
+          sha256sum main.zip
+
+      - name: Run C unit tests and installer tests
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          make test
+
+      - name: Build Android libraries for ARM and x86
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${ANDROID_NDK_LATEST_HOME:-}" ]]; then
+            export NDK_PATH="$ANDROID_NDK_LATEST_HOME"
+          elif [[ -n "${ANDROID_NDK_HOME:-}" ]]; then
+            export NDK_PATH="$ANDROID_NDK_HOME"
+          else
+            echo 'Android NDK not provided by GitHub runner'; exit 1
+          fi
+          test -x "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" || { echo 'NDK clang not found'; exit 1; }
+          echo "Using Android NDK: $NDK_PATH"
+          make release
+
+      - name: Verify installable release ZIP
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          out=build/out/ZygiskEnv-Alpha-Bridge-v2.0.0-compat-release.zip
+          test -s "$out"
+          unzip -tq "$out"
+          for path in module.prop customize.sh action.sh zygisk/arm64-v8a.so zygisk/armeabi-v7a.so zygisk/x86.so zygisk/x86_64.so; do
+            unzip -Z -1 "$out" | grep -Fxq "$path" || { echo "MISSING IN RELEASE: $path"; exit 1; }
+          done
+          if unzip -p "$out" module.prop | grep -Fq '${versionName}'; then
+            echo 'Module version placeholder not replaced'; exit 1
+          fi
+          echo 'SHA256 for installable release:'
+          sha256sum "$out"
+
+      - name: Upload installable Magisk module (single ZIP)
+        uses: actions/upload-artifact@v7
+        with:
+          path: source/build/out/ZygiskEnv-Alpha-Bridge-v2.0.0-compat-release.zip
+          archive: false
+          if-no-files-found: error
